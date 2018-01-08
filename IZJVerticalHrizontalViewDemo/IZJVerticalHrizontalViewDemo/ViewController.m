@@ -76,6 +76,7 @@
     return 300;
 }
 
+//可选
 - (UIView *)segmentViewInVerticalHrizontalView:(IZJVerticalHrizontalView *)verticalHrizontalView
 {
     UIButton *b = [UIButton buttonWithType:UIButtonTypeCustom];
@@ -90,13 +91,28 @@
     return 44;
 }
 
+
+//可选
+- (UIView *)verticalHrizontalView:(IZJVerticalHrizontalView *)verticalHrizontalView itemSegmentViewAtIndex:(NSInteger)index
+{
+    UIView *v = [[UIView alloc] init];
+    if (index %2 == 0) {
+        v.backgroundColor = [UIColor redColor];
+    }else{
+        v.backgroundColor = [UIColor yellowColor];
+    }
+    return v;
+}
+
+- (CGFloat)heightOfItemSegmentViewInVerticalHrizontalView:(IZJVerticalHrizontalView *)verticalHrizontalView atIndex:(NSInteger)index
+{
+    return 30;
+}
+
 #pragma mark - UITableViewDelegate,UITableViewDataSource
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section
 {
-   
-        return 100;
-    
-    
+    return 100;
 }
 
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath

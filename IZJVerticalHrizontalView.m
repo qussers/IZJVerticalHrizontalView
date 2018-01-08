@@ -2,7 +2,7 @@
 //  IZJVerticalHrizontalView.m
 //  IZJScrollView
 //
-//  Created by 李志宇 on 2018/1/6.
+//  Created by LZY on 2018/1/6.
 //  Copyright © 2018年 coodingOrg. All rights reserved.
 //
 
@@ -12,7 +12,15 @@
 
 @property (nonatomic, strong) UICollectionView *contentView;
 
-@property (nonatomic, strong) NSMutableArray *scrollViews;
+@property (nonatomic, strong) NSMutableDictionary *scrollViewDics;
+
+@property (nonatomic, strong) NSMutableDictionary *scrollViewDefaultContentInsetTops;
+
+//子元素停驻图
+@property (nonatomic, strong) NSMutableArray *itemSegments;
+
+//子元素停驻图高度
+@property (nonatomic, strong) NSMutableArray *itemSegmentsHeight;
 
 @property (nonatomic, strong) UIScrollView *headerContentView;
 
@@ -22,18 +30,21 @@
 
 static char CurrentScrollViewKey;
 static CGFloat const DefaultSegmentHeight = 44;
+static CGFloat const DefaultItemSegmentHeight = 30;
 
 @implementation IZJVerticalHrizontalView
 {
     CGFloat        _itemCount;
     CGFloat        _currentContentOffsetY;
     UIScrollView  *_currentScrollView;
+    NSInteger      _currentItemIndex;
     CGFloat        _headerHeight;
     CGFloat        _segmentHeight;
     UIView        *_headerView;
     UIView        *_segmentView;
     CGFloat       _totalHeaderHeight;
     BOOL          _isAutoScroll;
+    BOOL          _isReloadSection;
 }
 - (instancetype)initWithFrame:(CGRect)frame
 {
@@ -92,10 +103,27 @@ static CGFloat const DefaultSegmentHeight = 44;
         }
     }
     _totalHeaderHeight = _headerHeight + _segmentHeight;
-    [self.scrollViews removeAllObjects];
+    [self.scrollViewDics removeAllObjects];
+
     for (int i = 0; i < _itemCount; i++) {
-        UIScrollView *s = [self.dataSource verticalHrizontalView:self contentScrollViewAtIndex:i];
-        [self.scrollViews addObject:s];
+
+        if (i == 0) {
+            UIScrollView *s = [self.dataSource verticalHrizontalView:self contentScrollViewAtIndex:i];
+            [self.scrollViewDics setObject:s forKey:@(i)];
+            [self.scrollViewDefaultContentInsetTops setObject:@(s.contentInset.top) forKey:@(i)];
+        }
+        
+        if ([self.delegate respondsToSelector:@selector(verticalHrizontalView:itemSegmentViewAtIndex:)]) {
+            UIView *v = [self.delegate verticalHrizontalView:self itemSegmentViewAtIndex:i];
+            CGFloat itemSegmentHeight = DefaultItemSegmentHeight;
+            if ([self.delegate respondsToSelector:@selector(heightOfItemSegmentViewInVerticalHrizontalView:atIndex:)]) {
+               itemSegmentHeight = [self.delegate heightOfItemSegmentViewInVerticalHrizontalView:self atIndex:i];
+            }
+            [self.itemSegments addObject:v];
+            [self.itemSegmentsHeight addObject:@(itemSegmentHeight)];
+        }else{
+            [self.itemSegmentsHeight addObject:@(0)];
+        }
     }
     [self addObserverToScrollAsCurrentViewWithIndex:0];
     [self.contentView reloadData];
@@ -114,10 +142,38 @@ static CGFloat const DefaultSegmentHeight = 44;
    
 }
 
+- (void)reloadHrizontalItemAtIndex:(NSInteger)index
+{
+    _isAutoScroll = YES;
+    _isReloadSection = YES;
+    [self addHeaderViewToBaseView];
+    [self addSegmentViewToBaseView];
+    [self addItemSegmentViewToBaseView];
+    
+    UIScrollView *scrollView = [self.dataSource verticalHrizontalView:self contentScrollViewAtIndex:index];
+    [self.scrollViewDics setObject:scrollView forKey:@(index)];
+    [self.scrollViewDefaultContentInsetTops setObject:@(scrollView.contentInset.top) forKey:@(index)];
+    NSIndexPath *indexPath = [NSIndexPath indexPathForRow:index inSection:0];
+    [UIView performWithoutAnimation:^{
+        [self.contentView reloadItemsAtIndexPaths:@[indexPath]];
+    }];
+
+    [self addObserverToScrollAsCurrentViewWithIndex:index];
+    if (self.headerContentView.superview != self) {
+            [self addHeaderViewToCurrentView];
+    }
+    if (self.segmentContentView && self.segmentContentView.superview != self) {
+            [self addSegmentViewToCurrentView];
+    }
+    _isAutoScroll = NO;
+    _isReloadSection = NO;
+    
+}
+
 //滑动到第几个水平视图
 - (void)scrollToHorizontalItemAtIndex:(NSInteger)index animation:(BOOL)animation
 {
-    if (index < 0 || index > self.scrollViews.count - 1) {
+    if (index < 0 || index > _itemCount - 1) {
         return;
     }
     _isAutoScroll = YES;
@@ -139,16 +195,17 @@ static CGFloat const DefaultSegmentHeight = 44;
 #pragma mark - private
 - (void)addHeaderViewToCurrentView
 {
-    
     if (self.headerContentView.superview && self.headerContentView.superview == _currentScrollView) {
         return;
     }
     if (self.headerContentView.superview) {
         [self.headerContentView removeFromSuperview];
     }
-    self.headerContentView.frame = CGRectMake(0, -_totalHeaderHeight, self.bounds.size.width, _headerHeight);
+    CGFloat contentInsetTop = [[self.scrollViewDefaultContentInsetTops objectForKey:@(self.currentVerticalHrizontalItemIndex)] floatValue];
+    CGFloat itemSegmentHeight  =  [self.itemSegmentsHeight[self.currentVerticalHrizontalItemIndex] floatValue];
+    self.headerContentView.frame = CGRectMake(0, -_totalHeaderHeight - contentInsetTop - itemSegmentHeight , self.bounds.size.width, _headerHeight);
     [_currentScrollView addSubview:self.headerContentView];
-    [_currentScrollView layoutIfNeeded];
+    
 }
 
 - (void)addHeaderViewToBaseView
@@ -180,9 +237,12 @@ static CGFloat const DefaultSegmentHeight = 44;
     }
     
     if (self.segmentContentView.superview ) {
-        [self.headerContentView removeFromSuperview];
+        [self.segmentContentView removeFromSuperview];
     }
-    self.segmentContentView.frame = CGRectMake(0, -_segmentHeight, self.bounds.size.width, _segmentHeight);
+    CGFloat contentInsetTop = [[self.scrollViewDefaultContentInsetTops objectForKey:@(self.currentVerticalHrizontalItemIndex)] floatValue];
+    CGFloat itemSegmentHeight  =  [self.itemSegmentsHeight[self.currentVerticalHrizontalItemIndex] floatValue];
+    
+    self.segmentContentView.frame = CGRectMake(0, -_segmentHeight - contentInsetTop - itemSegmentHeight, self.bounds.size.width, _segmentHeight);
     [_currentScrollView addSubview:self.segmentContentView];
     [_currentScrollView layoutIfNeeded];
 }
@@ -209,12 +269,62 @@ static CGFloat const DefaultSegmentHeight = 44;
     }
 }
 
+
+- (void)addItemSegmentViewToCurrentViewAtIndex:(NSInteger)index
+{
+    if (self.itemSegments.count == 0) {
+        return;
+    }
+    UIScrollView *containerView = [self.scrollViewDics objectForKey:@(index)];
+    UIView *itemSegment = self.itemSegments[index];
+    CGFloat itemSegmentHeight  =  [self.itemSegmentsHeight[index] floatValue];
+    CGFloat contentInsetTop = [[self.scrollViewDefaultContentInsetTops objectForKey:@(index)] floatValue];
+    if ((-containerView.contentOffset.y <= _segmentHeight + self.segmentViewEdgeToTop + contentInsetTop + itemSegmentHeight) && containerView == _currentScrollView) {
+        CGFloat subY = _segmentHeight + self.segmentViewEdgeToTop + contentInsetTop + itemSegmentHeight + containerView.contentOffset.y;
+        itemSegment.frame = CGRectMake(0, -itemSegmentHeight - contentInsetTop + subY, self.bounds.size.width, itemSegmentHeight);
+    }else{
+        itemSegment.frame = CGRectMake(0, -itemSegmentHeight - contentInsetTop, self.bounds.size.width, itemSegmentHeight);
+    }
+    if (itemSegment.superview && itemSegment.superview != containerView) {
+        [itemSegment removeFromSuperview];
+    }
+    [containerView addSubview:itemSegment];
+    [containerView layoutIfNeeded];
+}
+
+
+- (void)addItemSegmentViewToBaseView
+{
+    
+    if (self.itemSegments.count == 0) {
+        return;
+    }
+    UIView *itemSegment = self.itemSegments[self.currentVerticalHrizontalItemIndex];
+    CGFloat itemSegmentHeight  =  [self.itemSegmentsHeight[self.currentVerticalHrizontalItemIndex] floatValue];
+    CGRect rect = CGRectZero;
+    if (itemSegment.superview && itemSegment.superview != self) {
+        CGFloat offsetY = [itemSegment.superview convertRect:itemSegment.frame toView:self].origin.y;
+        if (offsetY < self.segmentViewEdgeToTop + _segmentHeight) {
+            offsetY = self.segmentViewEdgeToTop + _segmentHeight;
+        }
+        rect = CGRectMake(0, offsetY, self.bounds.size.width, itemSegmentHeight);
+        [itemSegment removeFromSuperview];
+    }
+    if (!itemSegment.superview) {
+        itemSegment.frame = rect;
+        [self addSubview:itemSegment];
+        self.clipsToBounds = YES;
+        [self layoutIfNeeded];
+    }
+}
+
 - (void)addObserverToScrollAsCurrentViewWithIndex:(NSInteger)index
 {
     if (_currentScrollView) {
         [_currentScrollView removeObserver:self forKeyPath:@"contentOffset"];
     }
-    _currentScrollView = self.scrollViews[index];
+    _currentScrollView = [self.scrollViewDics objectForKey:@(index)];
+    _currentItemIndex = index;
     [_currentScrollView addObserver:self forKeyPath:@"contentOffset" options:NSKeyValueObservingOptionNew context:&CurrentScrollViewKey];
 }
 
@@ -223,20 +333,24 @@ static CGFloat const DefaultSegmentHeight = 44;
     if (context == & CurrentScrollViewKey) {
          CGPoint tableOffset = [[change objectForKey:@"new"] CGPointValue];
         _currentContentOffsetY = tableOffset.y;
+        CGFloat contentInsetTop = [[self.scrollViewDefaultContentInsetTops objectForKey:@(self.currentVerticalHrizontalItemIndex)] floatValue];
+        CGFloat itemSegmentHeight = [self.itemSegmentsHeight[self.currentVerticalHrizontalItemIndex] floatValue];
         if (_isAutoScroll) {
             return;
         }
-        if (-_currentContentOffsetY <= _segmentHeight + self.segmentViewEdgeToTop) {
+        if (-_currentContentOffsetY <= _segmentHeight + self.segmentViewEdgeToTop + contentInsetTop + itemSegmentHeight) {
             [self addSegmentViewToBaseView];
+            [self addItemSegmentViewToBaseView];
+            [self addHeaderViewToBaseView];
         }else{
+            [self addHeaderViewToCurrentView];
             [self addSegmentViewToCurrentView];
+            [self addItemSegmentViewToCurrentViewAtIndex:self.currentVerticalHrizontalItemIndex];
         }
-        [self addHeaderViewToCurrentView];
     }else{
         [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     }
 }
-
 
 #pragma mark - UICollectionViewDataSource && UICollectionViewDelegate
 - (NSInteger)collectionView:(UICollectionView *)collectionView numberOfItemsInSection:(NSInteger)section
@@ -247,7 +361,22 @@ static CGFloat const DefaultSegmentHeight = 44;
 - (UICollectionViewCell *)collectionView:(UICollectionView *)collectionView cellForItemAtIndexPath:(NSIndexPath *)indexPath
 {
     UICollectionViewCell *cell = [collectionView dequeueReusableCellWithReuseIdentifier:@"cell" forIndexPath:indexPath];
-    UIScrollView *scrollView = self.scrollViews[indexPath.row];
+    UIScrollView *scrollView = [self.scrollViewDics objectForKey:@(indexPath.row)];
+    if (!scrollView) {
+        scrollView = [self.dataSource verticalHrizontalView:self contentScrollViewAtIndex:indexPath.row];
+        [self.scrollViewDics setObject:scrollView forKey:@(indexPath.row)];
+    }
+    CGFloat contentInsetTop = 0;
+    NSNumber *c = [self.scrollViewDefaultContentInsetTops objectForKey:@(indexPath.row)];
+    if (!c) {
+        contentInsetTop = scrollView.contentInset.top;
+        [self.scrollViewDefaultContentInsetTops setObject:@(contentInsetTop) forKey:@(indexPath.row)];
+    }else{
+        contentInsetTop = [c floatValue];
+    }
+    
+    CGFloat itemSegmentHeight = [self.itemSegmentsHeight[indexPath.row] floatValue];
+    
     NSArray *subs = cell.contentView.subviews;
     if (subs && subs.count > 0) {
         UIView *v = subs.firstObject;
@@ -269,18 +398,23 @@ static CGFloat const DefaultSegmentHeight = 44;
         [cell.contentView addConstraint:bottomConstraint];
        }
     }
-    [scrollView setContentInset:UIEdgeInsetsMake(_totalHeaderHeight, 0, 0, 0)];
+    [scrollView setContentInset:UIEdgeInsetsMake(_totalHeaderHeight + contentInsetTop + itemSegmentHeight, 0, 0, 0)];
+    [scrollView layoutIfNeeded];
+    CGFloat oldOffSetY = _currentScrollView.contentOffset.y;
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (_currentScrollView.contentOffset.y >= _segmentHeight + self.segmentViewEdgeToTop) {
-             scrollView.contentOffset = CGPointMake(0, -(_segmentHeight + self.segmentViewEdgeToTop));
+        if (oldOffSetY >= -(_segmentHeight + self.segmentViewEdgeToTop + contentInsetTop + itemSegmentHeight)) {
+            scrollView.contentOffset = CGPointMake(0, -(_segmentHeight + self.segmentViewEdgeToTop + contentInsetTop + itemSegmentHeight));
         }else{
-             scrollView.contentOffset = _currentScrollView.contentOffset;
+            scrollView.contentOffset =  CGPointMake(0, oldOffSetY - (itemSegmentHeight - [self.itemSegmentsHeight[self.currentVerticalHrizontalItemIndex] floatValue]));
         }
     });
+    if (!_isReloadSection) {
+        [self addItemSegmentViewToCurrentViewAtIndex:indexPath.row];
+    }
+
     [cell layoutIfNeeded];
     return cell;
 }
-
 
 - (CGSize)collectionView:(UICollectionView *)collectionView layout:(UICollectionViewLayout *)collectionViewLayout sizeForItemAtIndexPath:(NSIndexPath *)indexPath
 {
@@ -292,7 +426,7 @@ static CGFloat const DefaultSegmentHeight = 44;
     _isAutoScroll = YES;
     [self addSegmentViewToBaseView];
     [self addHeaderViewToBaseView];
-    
+    [self addItemSegmentViewToCurrentViewAtIndex:self.currentVerticalHrizontalItemIndex];
     if (self.delegate && [self.delegate respondsToSelector:@selector(verticalHrizontalViewDidScroll:)]) {
         [self.delegate verticalHrizontalViewDidScroll:scrollView];
     }
@@ -303,20 +437,20 @@ static CGFloat const DefaultSegmentHeight = 44;
 - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView
 {
     NSInteger index = scrollView.contentOffset.x / scrollView.bounds.size.width;
-    if (index < 0 || index > self.scrollViews.count - 1) {
+    if (index < 0 || index > _itemCount - 1) {
         return;
     }
     [self addObserverToScrollAsCurrentViewWithIndex:index];
     [self addSegmentViewToCurrentView];
     [self addHeaderViewToCurrentView];
-    
     _isAutoScroll = NO;
+    
 }
 
 - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
 {
     NSInteger index = scrollView.contentOffset.x / scrollView.bounds.size.width;
-    if (index < 0 || index > self.scrollViews.count - 1) {
+    if (index < 0 || index > _itemCount - 1) {
         return;
     }
     [self addObserverToScrollAsCurrentViewWithIndex:index];
@@ -324,16 +458,34 @@ static CGFloat const DefaultSegmentHeight = 44;
     [self addHeaderViewToCurrentView];
     
     _isAutoScroll = NO;
+    
+    if (self.delegate && [self.delegate respondsToSelector:@selector(verticalHrizontalViewDidEndScroll:AtIndex:)]) {
+        [self.delegate verticalHrizontalViewDidEndScroll:scrollView AtIndex:index];
+    }
 }
 
+#pragma mark - setter
+- (CGFloat)segmentViewEdgeToTop
+{
+    if (!_segmentView) {
+        return 0;
+    }else{
+        return _segmentViewEdgeToTop;
+    }
+}
 
 #pragma mark - getter
 - (NSInteger)currentVerticalHrizontalItemIndex
 {
+    return _currentItemIndex;
+}
+
+- (UIScrollView *)currentItemScrollView
+{
     if (_currentScrollView) {
-        return [self.scrollViews indexOfObject:_currentScrollView];
+        return _currentScrollView;
     }else{
-        return -1;
+        return nil;
     }
 }
 
@@ -354,6 +506,7 @@ static CGFloat const DefaultSegmentHeight = 44;
         _contentView.alwaysBounceHorizontal = NO;
         _contentView.showsVerticalScrollIndicator = NO;
         _contentView.showsHorizontalScrollIndicator = NO;
+        _contentView.backgroundColor = [UIColor whiteColor];
         if (@available(iOS 10.0, *)) {
             _contentView.prefetchingEnabled = NO;
         }
@@ -378,13 +531,41 @@ static CGFloat const DefaultSegmentHeight = 44;
 }
 
 
-- (NSMutableArray *)scrollViews
+- (NSMutableDictionary *)scrollViewDics
 {
-    if (!_scrollViews) {
-        _scrollViews = @[].mutableCopy;
+    if (!_scrollViewDics) {
+        _scrollViewDics = @{}.mutableCopy;
     }
-    return _scrollViews;
+    return _scrollViewDics;
 }
+
+
+- (NSMutableDictionary *)scrollViewDefaultContentInsetTops
+{
+    if (!_scrollViewDefaultContentInsetTops) {
+        _scrollViewDefaultContentInsetTops = @{}.mutableCopy;
+    }
+    return _scrollViewDefaultContentInsetTops;
+}
+
+
+- (NSMutableArray *)itemSegments
+{
+    if (!_itemSegments) {
+        _itemSegments = @[].mutableCopy;
+    }
+    return _itemSegments;
+}
+
+
+- (NSMutableArray *)itemSegmentsHeight
+{
+    if (!_itemSegmentsHeight) {
+        _itemSegmentsHeight = @[].mutableCopy;
+    }
+    return _itemSegmentsHeight;
+}
+
 
 - (void)dealloc
 {
